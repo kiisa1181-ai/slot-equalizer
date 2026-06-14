@@ -1,0 +1,262 @@
+import { useState } from "react";
+
+const DEFAULT_NAMES = ["1人目", "2人目", "3人目"];
+
+const INITIAL_MEMBERS = () =>
+  DEFAULT_NAMES.map((name, i) => ({ id: i + 1, name, invest: "", recover: "" }));
+
+export default function SlotEqualizer() {
+  const [members, setMembers] = useState(INITIAL_MEMBERS());
+
+  const update = (id, field, val) => {
+    const clean = val.replace(/[^0-9]/g, "");
+    setMembers((prev) => prev.map((m) => (m.id === id ? { ...m, [field]: clean } : m)));
+  };
+
+  const updateName = (id, val) =>
+    setMembers((prev) => prev.map((m) => (m.id === id ? { ...m, name: val } : m)));
+
+  const addMember = () => {
+    const nextId = Date.now();
+    setMembers((prev) => [
+      ...prev,
+      { id: nextId, name: `${prev.length + 1}人目`, invest: "", recover: "" },
+    ]);
+  };
+
+  const removeMember = (id) => {
+    if (members.length <= 2) return;
+    setMembers((prev) => prev.filter((m) => m.id !== id));
+  };
+
+  const reset = () => setMembers(INITIAL_MEMBERS());
+
+  const memberCalc = members.map((m) => ({
+    ...m,
+    inv: Number(m.invest) || 0,
+    rec: Number(m.recover) || 0,
+    pnl: (Number(m.recover) || 0) - (Number(m.invest) || 0),
+  }));
+
+  const totalPnl = memberCalc.reduce((s, m) => s + m.pnl, 0);
+  const n = members.length;
+  const perPerson = n > 0 ? Math.round(totalPnl / n) : 0;
+
+  const balanced = memberCalc.map((m) => ({
+    ...m,
+    balance: m.pnl - perPerson,
+  }));
+
+  const computeSettlements = () => {
+    const cArr = balanced.filter((m) => m.balance > 0).map((m) => ({ name: m.name, b: m.balance })).sort((a, b) => b.b - a.b);
+    const dArr = balanced.filter((m) => m.balance < 0).map((m) => ({ name: m.name, b: m.balance })).sort((a, b) => a.b - b.b);
+    const txs = [];
+    let ci = 0, di = 0;
+    while (ci < cArr.length && di < dArr.length) {
+      const amount = Math.min(cArr[ci].b, -dArr[di].b);
+      if (amount > 0) txs.push({ from: dArr[di].name, to: cArr[ci].name, amount });
+      cArr[ci].b -= amount;
+      dArr[di].b += amount;
+      if (Math.abs(cArr[ci].b) < 1) ci++;
+      if (Math.abs(dArr[di].b) < 1) di++;
+    }
+    return txs;
+  };
+
+  const settlements = computeSettlements();
+  const hasData = memberCalc.some((m) => m.inv > 0 || m.rec > 0);
+
+  const fmt = (n) => Math.abs(Math.round(n)).toLocaleString("ja-JP");
+  const sign = (n) => (n >= 0 ? "+" : "−");
+  const col = (n) => (n > 0 ? "#00e5a0" : n < 0 ? "#ff4d6d" : "#888");
+
+  return (
+    <div style={s.root}>
+      <div style={s.grain} />
+
+      <header style={s.header}>
+        <div style={s.logo}>🎰</div>
+        <div>
+          <div style={s.title}>乗り打ち精算</div>
+          <div style={s.sub}>GROUP SLOT EQUALIZER</div>
+        </div>
+      </header>
+
+      <div style={s.summaryCard}>
+        <div style={s.summaryRow}>
+          <Cell label="グループ合計" value={`${sign(totalPnl)}${fmt(totalPnl)}円`} color={col(totalPnl)} />
+          <div style={s.divider} />
+          <Cell label={`一人あたり (÷${n})`} value={`${sign(perPerson)}${fmt(perPerson)}円`} color={col(perPerson)} />
+        </div>
+      </div>
+
+      <div style={s.section}>
+        <SectionHead title="メンバー入力" badge={`${n}人`} />
+
+        {members.map((m) => {
+          const calc = memberCalc.find((c) => c.id === m.id);
+          const bal = balanced.find((b) => b.id === m.id);
+          return (
+            <div key={m.id} style={s.card}>
+              <div style={s.cardHead}>
+                <input
+                  style={s.nameInput}
+                  value={m.name}
+                  onChange={(e) => updateName(m.id, e.target.value)}
+                  maxLength={10}
+                />
+                {members.length > 2 && (
+                  <button style={s.delBtn} onClick={() => removeMember(m.id)}>✕</button>
+                )}
+              </div>
+
+              <div style={s.inputRow}>
+                <AmountField label="投資額" value={m.invest} onChange={(v) => update(m.id, "invest", v)} />
+                <div style={s.arrow}>→</div>
+                <AmountField label="回収額" value={m.recover} onChange={(v) => update(m.id, "recover", v)} />
+              </div>
+
+              {(calc.inv > 0 || calc.rec > 0) && (
+                <div style={s.cardFoot}>
+                  <Tag label="個人収支" value={`${sign(calc.pnl)}${fmt(calc.pnl)}円`} color={col(calc.pnl)} />
+                  <span style={s.arrow2}>▶</span>
+                  <Tag label="均等後" value={`${sign(perPerson)}${fmt(perPerson)}円`} color={col(perPerson)} />
+                  {bal && Math.abs(bal.balance) >= 1 && (
+                    <>
+                      <span style={s.arrow2}>▶</span>
+                      <Tag
+                        label={bal.balance > 0 ? "受取" : "支払"}
+                        value={`${fmt(bal.balance)}円`}
+                        color={col(bal.balance)}
+                      />
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        <button style={s.addBtn} onClick={addMember}>＋ メンバーを追加</button>
+      </div>
+
+      {hasData && settlements.length > 0 && (
+        <div style={s.section}>
+          <SectionHead title="精算方法" badge={`${settlements.length}件`} />
+          <div style={s.settlementCard}>
+            {settlements.map((tx, i) => (
+              <div key={i} style={{ ...s.txRow, borderBottom: i < settlements.length - 1 ? "1px solid rgba(255,255,255,0.05)" : "none" }}>
+                <div style={s.txPerson}>
+                  <div style={s.txBadgePay}>支払</div>
+                  <div style={s.txName}>{tx.from}</div>
+                </div>
+                <div style={s.txMid}>
+                  <div style={s.txAmt}>{tx.amount.toLocaleString("ja-JP")}円</div>
+                  <div style={s.txLine}><span style={s.txArrow}>▶</span></div>
+                </div>
+                <div style={{ ...s.txPerson, alignItems: "flex-end" }}>
+                  <div style={s.txBadgeRecv}>受取</div>
+                  <div style={s.txName}>{tx.to}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {hasData && settlements.length === 0 && (
+        <div style={s.evenBanner}>🎉 全員の収支が均等です！精算不要</div>
+      )}
+
+      <button style={s.resetBtn} onClick={reset}>リセット</button>
+
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Noto+Sans+JP:wght@400;700&display=swap');
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background: #0d0d12; overscroll-behavior: none; }
+        input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
+        @keyframes slideUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+      `}</style>
+    </div>
+  );
+}
+
+function Cell({ label, value, color }) {
+  return (
+    <div style={{ flex: 1, textAlign: "center" }}>
+      <div style={{ fontSize: 10, letterSpacing: 2, color: "#555", marginBottom: 6 }}>{label}</div>
+      <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: 30, color: color || "#fff", letterSpacing: 1 }}>{value}</div>
+    </div>
+  );
+}
+
+function SectionHead({ title, badge }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+      <span style={{ fontSize: 11, letterSpacing: 3, color: "#555", textTransform: "uppercase" }}>{title}</span>
+      <span style={{ fontSize: 11, color: "#444", background: "#1e1e2a", padding: "2px 10px", borderRadius: 99 }}>{badge}</span>
+    </div>
+  );
+}
+
+function AmountField({ label, value, onChange }) {
+  return (
+    <div style={{ flex: 1 }}>
+      <div style={{ fontSize: 10, letterSpacing: 2, color: "#555", marginBottom: 6 }}>{label}</div>
+      <div style={{ display: "flex", alignItems: "center", background: "#0d0d12", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, paddingRight: 8 }}>
+        <input
+          type="number"
+          inputMode="numeric"
+          placeholder="0"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          style={{ flex: 1, background: "none", border: "none", outline: "none", color: "#f0f0f0", fontSize: 18, fontWeight: 700, padding: "10px 10px", fontFamily: "'Noto Sans JP',sans-serif", width: "100%" }}
+        />
+        <span style={{ fontSize: 11, color: "#555" }}>円</span>
+      </div>
+    </div>
+  );
+}
+
+function Tag({ label, value, color }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+      <span style={{ fontSize: 9, color: "#555", letterSpacing: 1 }}>{label}</span>
+      <span style={{ fontSize: 13, fontWeight: 700, color }}>{value}</span>
+    </div>
+  );
+}
+
+const s = {
+  root: { minHeight: "100vh", minHeight: "100dvh", background: "#0d0d12", fontFamily: "'Noto Sans JP',sans-serif", color: "#f0f0f0", paddingBottom: 48, paddingTop: "env(safe-area-inset-top)", paddingLeft: "env(safe-area-inset-left)", paddingRight: "env(safe-area-inset-right)", position: "relative", maxWidth: 480, margin: "0 auto" },
+  grain: { position: "fixed", inset: 0, pointerEvents: "none", opacity: 0.03, background: "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")", zIndex: 0 },
+  header: { padding: "24px 20px 16px", borderBottom: "1px solid rgba(255,255,255,0.07)", display: "flex", alignItems: "center", gap: 12, position: "relative", zIndex: 1 },
+  logo: { fontSize: 32 },
+  title: { fontFamily: "'Bebas Neue',sans-serif", fontSize: 26, letterSpacing: 2, color: "#fff" },
+  sub: { fontSize: 10, letterSpacing: 4, color: "#444", marginTop: 2 },
+  summaryCard: { margin: "20px 16px", background: "linear-gradient(135deg,#1a1a2e,#16213e)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 20, padding: "24px 20px", position: "relative", zIndex: 1, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" },
+  summaryRow: { display: "flex", alignItems: "center" },
+  divider: { width: 1, height: 48, background: "rgba(255,255,255,0.08)", margin: "0 12px" },
+  section: { padding: "0 16px", marginBottom: 20, position: "relative", zIndex: 1 },
+  card: { background: "#141420", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 16, padding: 16, marginBottom: 12, animation: "slideUp 0.3s ease both" },
+  cardHead: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
+  nameInput: { background: "none", border: "none", borderBottom: "1px solid rgba(255,255,255,0.1)", outline: "none", color: "#ccc", fontSize: 14, fontWeight: 700, letterSpacing: 1, fontFamily: "'Noto Sans JP',sans-serif", width: "80%", paddingBottom: 2 },
+  delBtn: { background: "none", border: "none", color: "#444", fontSize: 13, cursor: "pointer", padding: "2px 6px" },
+  inputRow: { display: "flex", alignItems: "flex-end", gap: 8 },
+  arrow: { fontSize: 14, color: "#333", paddingBottom: 10 },
+  cardFoot: { display: "flex", alignItems: "center", gap: 8, marginTop: 14, paddingTop: 12, borderTop: "1px solid rgba(255,255,255,0.05)", flexWrap: "wrap" },
+  arrow2: { color: "#333", fontSize: 10 },
+  addBtn: { width: "100%", background: "none", border: "1px dashed rgba(255,255,255,0.12)", borderRadius: 14, color: "#555", fontSize: 14, padding: 14, cursor: "pointer", letterSpacing: 1 },
+  settlementCard: { background: "#141420", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 16, overflow: "hidden" },
+  txRow: { display: "flex", alignItems: "center", padding: "16px 20px", gap: 8 },
+  txPerson: { width: 70, display: "flex", flexDirection: "column", gap: 4 },
+  txBadgePay: { fontSize: 9, letterSpacing: 1, color: "#ff4d6d", background: "rgba(255,77,109,0.12)", borderRadius: 4, padding: "2px 6px", textAlign: "center", width: "fit-content" },
+  txBadgeRecv: { fontSize: 9, letterSpacing: 1, color: "#00e5a0", background: "rgba(0,229,160,0.12)", borderRadius: 4, padding: "2px 6px", textAlign: "center", width: "fit-content" },
+  txName: { fontSize: 14, fontWeight: 700, color: "#fff" },
+  txMid: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 },
+  txAmt: { fontSize: 15, fontWeight: 700, color: "#fff" },
+  txLine: { width: "100%", display: "flex", alignItems: "center", justifyContent: "center" },
+  txArrow: { fontSize: 12, color: "#444" },
+  evenBanner: { margin: "0 16px 20px", background: "#141420", border: "1px solid rgba(0,229,160,0.2)", borderRadius: 16, padding: 20, textAlign: "center", fontSize: 14, color: "#00e5a0", position: "relative", zIndex: 1 },
+  resetBtn: { display: "block", margin: "8px auto 0", background: "none", border: "1px solid rgba(255,77,109,0.25)", borderRadius: 99, color: "#ff4d6d55", fontSize: 12, letterSpacing: 2, padding: "8px 28px", cursor: "pointer", position: "relative", zIndex: 1 },
+};
