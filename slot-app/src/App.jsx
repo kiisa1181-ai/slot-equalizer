@@ -29,18 +29,20 @@ export default function SlotEqualizer() {
     inv: Number(m.invest) || 0,
     rec: Number(m.recover) || 0,
     pnl: (Number(m.recover) || 0) - (Number(m.invest) || 0),
+    isActive: m.invest !== "" || m.recover !== "", // どちらかに入力があれば計算対象
   }));
 
-  const totalPnl = memberCalc.reduce((s, m) => s + m.pnl, 0);
-  const n = members.length;
+  const activeMembers = memberCalc.filter((m) => m.isActive);
+  const totalPnl = activeMembers.reduce((s, m) => s + m.pnl, 0);
+  const n = activeMembers.length;
 
   // 単位で切り捨て
   const floorTo = (val, u) => Math.floor(val / u) * u;
   const perPersonExact = n > 0 ? totalPnl / n : 0;
-  const perPerson = floorTo(perPersonExact, unit);
-  const remainder = totalPnl - perPerson * n;
+  const perPerson = n > 0 ? floorTo(perPersonExact, unit) : 0;
+  const remainder = n > 0 ? totalPnl - perPerson * n : 0;
 
-  const balanced = memberCalc.map((m) => ({
+  const balanced = activeMembers.map((m) => ({
     ...m,
     balance: m.pnl - perPerson, // 正=払う側、負=受け取る側
   }));
@@ -62,7 +64,7 @@ export default function SlotEqualizer() {
   };
 
   const settlements = computeSettlements();
-  const hasData = memberCalc.some((m) => m.inv > 0 || m.rec > 0);
+  const hasData = n > 0;
 
   const fmt = (n) => Math.abs(Math.round(n)).toLocaleString("ja-JP");
   const sign = (n) => (n >= 0 ? "+" : "−");
@@ -128,23 +130,27 @@ export default function SlotEqualizer() {
 
       {/* メンバー入力 */}
       <div style={s.section}>
-        <SectionHead title="メンバー入力" badge={`${n}人`} />
+        <SectionHead title="メンバー入力" badge={`${n}/${members.length}人`} />
         {members.map((m) => {
           const calc = memberCalc.find((c) => c.id === m.id);
           const bal = balanced.find((b) => b.id === m.id);
           const balAmt = bal ? floorTo(Math.abs(bal.balance), unit) : 0;
+          const isActive = calc.isActive;
           return (
-            <div key={m.id} style={s.card}>
+            <div key={m.id} style={{ ...s.card, ...(isActive ? {} : s.cardInactive) }}>
               <div style={s.cardHead}>
                 <input style={s.nameInput} value={m.name} onChange={(e) => updateName(m.id, e.target.value)} maxLength={10} />
-                {members.length > 2 && <button style={s.delBtn} onClick={() => removeMember(m.id)}>✕</button>}
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {!isActive && <span style={s.excludedBadge}>未参加</span>}
+                  {members.length > 2 && <button style={s.delBtn} onClick={() => removeMember(m.id)}>✕</button>}
+                </div>
               </div>
               <div style={s.inputRow}>
                 <AmountField label="投資額" value={m.invest} onChange={(v) => update(m.id, "invest", v)} />
                 <div style={s.arrow}>→</div>
                 <AmountField label="回収額" value={m.recover} onChange={(v) => update(m.id, "recover", v)} />
               </div>
-              {(calc.inv > 0 || calc.rec > 0) && (
+              {isActive && (
                 <div style={s.resultFlow}>
                   <FlowStep label="自分の収支" value={`${sign(calc.pnl)}${fmt(calc.pnl)}円`} color={col(calc.pnl)} />
                   <div style={s.flowArrow}>↓</div>
@@ -289,6 +295,8 @@ const s = {
   remainderBadge: { marginTop: 6, fontSize: 11, color: "#ff8c42", background: "rgba(255,140,66,0.12)", borderRadius: 99, padding: "2px 10px", display: "inline-block" },
   divider: { width: 1, height: 56, background: "rgba(255,255,255,0.08)", margin: "0 12px" },
   card: { background: "#141420", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 16, padding: 16, marginBottom: 12, animation: "slideUp 0.3s ease both" },
+  cardInactive: { opacity: 0.5 },
+  excludedBadge: { fontSize: 9, letterSpacing: 1, color: "#666", background: "rgba(255,255,255,0.06)", borderRadius: 4, padding: "2px 8px" },
   cardHead: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
   nameInput: { background: "none", border: "none", borderBottom: "1px solid rgba(255,255,255,0.1)", outline: "none", color: "#ccc", fontSize: 14, fontWeight: 700, letterSpacing: 1, fontFamily: "'Noto Sans JP',sans-serif", width: "80%", paddingBottom: 2 },
   delBtn: { background: "none", border: "none", color: "#444", fontSize: 13, cursor: "pointer", padding: "2px 6px" },
