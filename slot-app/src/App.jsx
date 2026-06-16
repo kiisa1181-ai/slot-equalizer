@@ -1,34 +1,27 @@
 import { useState } from "react";
 
 const DEFAULT_NAMES = ["1人目", "2人目", "3人目"];
-
 const INITIAL_MEMBERS = () =>
   DEFAULT_NAMES.map((name, i) => ({ id: i + 1, name, invest: "", recover: "" }));
 
 export default function SlotEqualizer() {
   const [members, setMembers] = useState(INITIAL_MEMBERS());
+  const [unit, setUnit] = useState(100); // 100 or 1000
 
   const update = (id, field, val) => {
     const clean = val.replace(/[^0-9]/g, "");
     setMembers((prev) => prev.map((m) => (m.id === id ? { ...m, [field]: clean } : m)));
   };
-
   const updateName = (id, val) =>
     setMembers((prev) => prev.map((m) => (m.id === id ? { ...m, name: val } : m)));
-
   const addMember = () => {
     const nextId = Date.now();
-    setMembers((prev) => [
-      ...prev,
-      { id: nextId, name: `${prev.length + 1}人目`, invest: "", recover: "" },
-    ]);
+    setMembers((prev) => [...prev, { id: nextId, name: `${prev.length + 1}人目`, invest: "", recover: "" }]);
   };
-
   const removeMember = (id) => {
     if (members.length <= 2) return;
     setMembers((prev) => prev.filter((m) => m.id !== id));
   };
-
   const reset = () => setMembers(INITIAL_MEMBERS());
 
   const memberCalc = members.map((m) => ({
@@ -40,17 +33,21 @@ export default function SlotEqualizer() {
 
   const totalPnl = memberCalc.reduce((s, m) => s + m.pnl, 0);
   const n = members.length;
-  const perPerson = n > 0 ? Math.round(totalPnl / n) : 0;
+
+  // 単位で切り捨て
+  const floorTo = (val, u) => Math.floor(val / u) * u;
+  const perPersonExact = n > 0 ? totalPnl / n : 0;
+  const perPerson = floorTo(perPersonExact, unit);
+  const remainder = totalPnl - perPerson * n;
 
   const balanced = memberCalc.map((m) => ({
     ...m,
-    balance: m.pnl - perPerson, // 正=払う側（多く勝った分を渡す）、負=受け取る側
+    balance: m.pnl - perPerson, // 正=払う側、負=受け取る側
   }));
 
   const computeSettlements = () => {
-    // balance > 0 の人は払う側、balance < 0 の人は受け取る側
-    const payers = balanced.filter((m) => m.balance > 0).map((m) => ({ name: m.name, b: m.balance })).sort((a, b) => b.b - a.b);
-    const receivers = balanced.filter((m) => m.balance < 0).map((m) => ({ name: m.name, b: -m.balance })).sort((a, b) => b.b - a.b);
+    const payers = balanced.filter((m) => m.balance > 0).map((m) => ({ name: m.name, b: floorTo(m.balance, unit) })).filter(m => m.b > 0).sort((a, b) => b.b - a.b);
+    const receivers = balanced.filter((m) => m.balance < 0).map((m) => ({ name: m.name, b: floorTo(-m.balance, unit) })).filter(m => m.b > 0).sort((a, b) => b.b - a.b);
     const txs = [];
     let pi = 0, ri = 0;
     while (pi < payers.length && ri < receivers.length) {
@@ -83,16 +80,48 @@ export default function SlotEqualizer() {
         </div>
       </header>
 
-      {/* 全体サマリー */}
+      {/* 精算単位設定 */}
+      <div style={{ ...s.section, marginTop: 16 }}>
+        <div style={s.modeCard}>
+          <div style={s.modeLabel}>精算単位の設定</div>
+          <label style={s.modeRow} onClick={() => setUnit(100)}>
+            <div style={{ ...s.checkbox, ...(unit === 100 ? s.checkboxOn : s.checkboxOff) }}>
+              {unit === 100 && <span style={s.checkmark}>✓</span>}
+            </div>
+            <div>
+              <div style={{ ...s.modeTitle, color: unit === 100 ? "#f0f0f0" : "#888" }}>100円単位で精算</div>
+              <div style={s.modeDesc}>100円未満はあまりとして表示</div>
+            </div>
+          </label>
+          <label style={s.modeRow} onClick={() => setUnit(1000)}>
+            <div style={{ ...s.checkbox, ...(unit === 1000 ? s.checkboxOn : s.checkboxOff) }}>
+              {unit === 1000 && <span style={s.checkmark}>✓</span>}
+            </div>
+            <div>
+              <div style={{ ...s.modeTitle, color: unit === 1000 ? "#f0f0f0" : "#888" }}>1,000円単位で精算</div>
+              <div style={s.modeDesc}>1,000円未満はあまりとして表示</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      {/* サマリー */}
       <div style={s.summaryCard}>
         <div style={s.summaryRow}>
           <Cell label="グループ合計" value={`${sign(totalPnl)}${fmt(totalPnl)}円`} color={col(totalPnl)} />
           <div style={s.divider} />
-          <Cell label={`最終的な一人あたり収支`} value={`${sign(perPerson)}${fmt(perPerson)}円`} color={col(perPerson)} highlight />
+          <div style={{ flex: 1, textAlign: "center" }}>
+            <div style={{ fontSize: 10, letterSpacing: 1, color: "#555", marginBottom: 6, lineHeight: 1.4 }}>一人あたり収支<br/>（{unit.toLocaleString()}円単位）</div>
+            <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: 30, color: col(perPerson), letterSpacing: 1 }}>{sign(perPerson)}{fmt(perPerson)}円</div>
+            {hasData && remainder !== 0 && (
+              <div style={s.remainderBadge}>あまり {fmt(remainder)}円</div>
+            )}
+          </div>
         </div>
         {hasData && (
           <div style={s.summaryNote}>
             精算後、全員の収支が <span style={{ color: col(perPerson), fontWeight: 700 }}>{sign(perPerson)}{fmt(perPerson)}円</span> になります
+            {remainder !== 0 && <><br/><span style={{ color: "#ff8c42" }}>あまり {fmt(remainder)}円 は別途調整してください</span></>}
           </div>
         )}
       </div>
@@ -100,45 +129,34 @@ export default function SlotEqualizer() {
       {/* メンバー入力 */}
       <div style={s.section}>
         <SectionHead title="メンバー入力" badge={`${n}人`} />
-
         {members.map((m) => {
           const calc = memberCalc.find((c) => c.id === m.id);
           const bal = balanced.find((b) => b.id === m.id);
+          const balAmt = bal ? floorTo(Math.abs(bal.balance), unit) : 0;
           return (
             <div key={m.id} style={s.card}>
               <div style={s.cardHead}>
-                <input
-                  style={s.nameInput}
-                  value={m.name}
-                  onChange={(e) => updateName(m.id, e.target.value)}
-                  maxLength={10}
-                />
-                {members.length > 2 && (
-                  <button style={s.delBtn} onClick={() => removeMember(m.id)}>✕</button>
-                )}
+                <input style={s.nameInput} value={m.name} onChange={(e) => updateName(m.id, e.target.value)} maxLength={10} />
+                {members.length > 2 && <button style={s.delBtn} onClick={() => removeMember(m.id)}>✕</button>}
               </div>
-
               <div style={s.inputRow}>
                 <AmountField label="投資額" value={m.invest} onChange={(v) => update(m.id, "invest", v)} />
                 <div style={s.arrow}>→</div>
                 <AmountField label="回収額" value={m.recover} onChange={(v) => update(m.id, "recover", v)} />
               </div>
-
               {(calc.inv > 0 || calc.rec > 0) && (
                 <div style={s.resultFlow}>
                   <FlowStep label="自分の収支" value={`${sign(calc.pnl)}${fmt(calc.pnl)}円`} color={col(calc.pnl)} />
                   <div style={s.flowArrow}>↓</div>
-                  {bal && Math.abs(bal.balance) >= 1 && (
+                  {bal && balAmt >= 1 && (
                     <FlowStep
-                      label={bal.balance > 0 ? `${fmt(bal.balance)}円 支払う` : `${fmt(bal.balance)}円 受け取る`}
+                      label={bal.balance > 0 ? `${fmt(balAmt)}円 支払う` : `${fmt(balAmt)}円 受け取る`}
                       value={null}
                       color={col(-bal.balance)}
                       isAction
                     />
                   )}
-                  {(!bal || Math.abs(bal.balance) < 1) && (
-                    <FlowStep label="精算不要" value={null} color="#888" isAction />
-                  )}
+                  {(!bal || balAmt < 1) && <FlowStep label="精算不要" value={null} color="#888" isAction />}
                   <div style={s.flowArrow}>↓</div>
                   <FlowStep label="最終収支" value={`${sign(perPerson)}${fmt(perPerson)}円`} color={col(perPerson)} final />
                 </div>
@@ -146,14 +164,13 @@ export default function SlotEqualizer() {
             </div>
           );
         })}
-
         <button style={s.addBtn} onClick={addMember}>＋ メンバーを追加</button>
       </div>
 
       {/* 精算方法 */}
       {hasData && settlements.length > 0 && (
         <div style={s.section}>
-          <SectionHead title="精算方法（誰が誰にいくら払うか）" badge={`${settlements.length}件`} />
+          <SectionHead title="精算方法" badge={`${settlements.length}件`} />
           <div style={s.settlementCard}>
             {settlements.map((tx, i) => (
               <div key={i} style={{ ...s.txRow, borderBottom: i < settlements.length - 1 ? "1px solid rgba(255,255,255,0.05)" : "none" }}>
@@ -172,13 +189,24 @@ export default function SlotEqualizer() {
               </div>
             ))}
           </div>
-          <div style={s.settlementHint}>
-            ※この通りに支払うと、全員の最終収支が均等になります
+          <div style={s.settlementHint}>※この通りに支払うと、全員の最終収支が均等になります</div>
+        </div>
+      )}
+
+      {/* あまり表示 */}
+      {hasData && remainder !== 0 && (
+        <div style={{ ...s.section }}>
+          <div style={s.amariBox}>
+            <div style={{ fontSize: 20 }}>⚠️</div>
+            <div>
+              <div style={s.amariTitle}>あまり：{fmt(remainder)}円</div>
+              <div style={s.amariDesc}>割り切れなかった端数です。別途調整してください。</div>
+            </div>
           </div>
         </div>
       )}
 
-      {hasData && settlements.length === 0 && (
+      {hasData && settlements.length === 0 && remainder === 0 && (
         <div style={s.evenBanner}>🎉 全員の収支が均等です！精算不要</div>
       )}
 
@@ -195,11 +223,11 @@ export default function SlotEqualizer() {
   );
 }
 
-function Cell({ label, value, color, highlight }) {
+function Cell({ label, value, color }) {
   return (
     <div style={{ flex: 1, textAlign: "center" }}>
       <div style={{ fontSize: 10, letterSpacing: 1, color: "#555", marginBottom: 6, lineHeight: 1.4 }}>{label}</div>
-      <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: highlight ? 34 : 30, color: color || "#fff", letterSpacing: 1 }}>{value}</div>
+      <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: 30, color: color || "#fff", letterSpacing: 1 }}>{value}</div>
     </div>
   );
 }
@@ -218,32 +246,20 @@ function AmountField({ label, value, onChange }) {
     <div style={{ flex: 1 }}>
       <div style={{ fontSize: 10, letterSpacing: 2, color: "#555", marginBottom: 6 }}>{label}</div>
       <div style={{ display: "flex", alignItems: "center", background: "#0d0d12", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, paddingRight: 8 }}>
-        <input
-          type="number"
-          inputMode="numeric"
-          placeholder="0"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          style={{ flex: 1, background: "none", border: "none", outline: "none", color: "#f0f0f0", fontSize: 18, fontWeight: 700, padding: "10px 10px", fontFamily: "'Noto Sans JP',sans-serif", width: "100%" }}
-        />
+        <input type="number" inputMode="numeric" placeholder="0" value={value} onChange={(e) => onChange(e.target.value)}
+          style={{ flex: 1, background: "none", border: "none", outline: "none", color: "#f0f0f0", fontSize: 18, fontWeight: 700, padding: "10px 10px", fontFamily: "'Noto Sans JP',sans-serif", width: "100%" }} />
         <span style={{ fontSize: 11, color: "#555" }}>円</span>
       </div>
     </div>
   );
 }
 
-function FlowStep({ label, value, color, isAction, final }) {
+function FlowStep({ label, value, color, final }) {
   return (
-    <div style={{
-      display: "flex",
-      flexDirection: "column",
-      alignItems: "center",
-      gap: 2,
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
       padding: final ? "8px 16px" : "6px 14px",
       background: final ? "rgba(255,255,255,0.04)" : "transparent",
-      borderRadius: 10,
-      border: final ? "1px solid rgba(255,255,255,0.08)" : "none",
-    }}>
+      borderRadius: 10, border: final ? "1px solid rgba(255,255,255,0.08)" : "none" }}>
       <span style={{ fontSize: 10, color: "#666", letterSpacing: 1 }}>{label}</span>
       {value && <span style={{ fontSize: final ? 18 : 14, fontWeight: 700, color }}>{value}</span>}
     </div>
@@ -257,11 +273,21 @@ const s = {
   logo: { fontSize: 32 },
   title: { fontFamily: "'Bebas Neue',sans-serif", fontSize: 26, letterSpacing: 2, color: "#fff" },
   sub: { fontSize: 10, letterSpacing: 4, color: "#444", marginTop: 2 },
-  summaryCard: { margin: "20px 16px", background: "linear-gradient(135deg,#1a1a2e,#16213e)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 20, padding: "24px 20px", position: "relative", zIndex: 1, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" },
+  section: { padding: "0 16px", marginBottom: 16, position: "relative", zIndex: 1 },
+  modeCard: { background: "#141420", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 14, padding: 14 },
+  modeLabel: { fontSize: 10, letterSpacing: 2, color: "#555", marginBottom: 12 },
+  modeRow: { display: "flex", alignItems: "center", gap: 10, marginBottom: 10, cursor: "pointer" },
+  checkbox: { width: 22, height: 22, borderRadius: 6, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" },
+  checkboxOn: { background: "#00e5a0" },
+  checkboxOff: { border: "1px solid rgba(255,255,255,0.2)", background: "transparent" },
+  checkmark: { color: "#0d0d12", fontSize: 13, fontWeight: 700 },
+  modeTitle: { fontSize: 13, fontWeight: 700 },
+  modeDesc: { fontSize: 10, color: "#555" },
+  summaryCard: { margin: "0 16px 16px", background: "linear-gradient(135deg,#1a1a2e,#16213e)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 20, padding: "24px 20px", position: "relative", zIndex: 1, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" },
   summaryRow: { display: "flex", alignItems: "center" },
-  summaryNote: { marginTop: 16, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.06)", textAlign: "center", fontSize: 12, color: "#888", lineHeight: 1.6 },
+  summaryNote: { marginTop: 16, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.06)", textAlign: "center", fontSize: 12, color: "#888", lineHeight: 1.7 },
+  remainderBadge: { marginTop: 6, fontSize: 11, color: "#ff8c42", background: "rgba(255,140,66,0.12)", borderRadius: 99, padding: "2px 10px", display: "inline-block" },
   divider: { width: 1, height: 56, background: "rgba(255,255,255,0.08)", margin: "0 12px" },
-  section: { padding: "0 16px", marginBottom: 20, position: "relative", zIndex: 1 },
   card: { background: "#141420", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 16, padding: 16, marginBottom: 12, animation: "slideUp 0.3s ease both" },
   cardHead: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
   nameInput: { background: "none", border: "none", borderBottom: "1px solid rgba(255,255,255,0.1)", outline: "none", color: "#ccc", fontSize: 14, fontWeight: 700, letterSpacing: 1, fontFamily: "'Noto Sans JP',sans-serif", width: "80%", paddingBottom: 2 },
@@ -278,11 +304,13 @@ const s = {
   txBadgePay: { fontSize: 9, letterSpacing: 1, color: "#ff4d6d", background: "rgba(255,77,109,0.12)", borderRadius: 4, padding: "2px 6px", textAlign: "center", width: "fit-content" },
   txBadgeRecv: { fontSize: 9, letterSpacing: 1, color: "#00e5a0", background: "rgba(0,229,160,0.12)", borderRadius: 4, padding: "2px 6px", textAlign: "center", width: "fit-content" },
   txName: { fontSize: 14, fontWeight: 700, color: "#fff" },
-  txSubLabel: { fontSize: 10, color: "#555" },
   txMid: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 },
   txAmt: { fontSize: 15, fontWeight: 700, color: "#fff" },
   txLine: { width: "100%", display: "flex", alignItems: "center", justifyContent: "center" },
   txArrow: { fontSize: 12, color: "#444" },
+  amariBox: { background: "rgba(255,140,66,0.08)", border: "1px solid rgba(255,140,66,0.25)", borderRadius: 14, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12 },
+  amariTitle: { fontSize: 13, fontWeight: 700, color: "#ff8c42" },
+  amariDesc: { fontSize: 10, color: "#888", marginTop: 3 },
   evenBanner: { margin: "0 16px 20px", background: "#141420", border: "1px solid rgba(0,229,160,0.2)", borderRadius: 16, padding: 20, textAlign: "center", fontSize: 14, color: "#00e5a0", position: "relative", zIndex: 1 },
   resetBtn: { display: "block", margin: "8px auto 0", background: "none", border: "1px solid rgba(255,77,109,0.25)", borderRadius: 99, color: "#ff4d6d55", fontSize: 12, letterSpacing: 2, padding: "8px 28px", cursor: "pointer", position: "relative", zIndex: 1 },
 };
